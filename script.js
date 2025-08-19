@@ -6,15 +6,21 @@ function uploadFiles() {
     const fileInput = document.getElementById('fileInput');
     const files = fileInput.files;
     
+    console.log('Upload button clicked, files:', files.length);
+    
     if (files.length === 0) {
         alert('Please select files to upload');
         return;
     }
     
-    Array.from(files).forEach(file => {
-        if (file.type === 'application/pdf') {
-            parseTextFromFile(file);
-        } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+    Array.from(files).forEach((file, index) => {
+        console.log(`File ${index + 1}:`, file.name, 'Type:', file.type);
+        
+        // Handle all text files and try to parse any file
+        if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.json')) {
+            parseTextFile(file);
+        } else {
+            console.log('Attempting to parse unknown file type as text');
             parseTextFile(file);
         }
     });
@@ -24,29 +30,47 @@ function parseTextFromFile(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
         const text = e.target.result;
+        console.log('File loaded successfully, size:', text.length);
         const parsedData = parseBloodworkText(text, file.name);
         if (parsedData) {
+            console.log('Adding parsed data to reports');
             bloodworkReports.push(parsedData);
             updateFilters();
+        } else {
+            console.log('Failed to parse data');
         }
+    };
+    reader.onerror = function(e) {
+        console.error('File reading error:', e);
     };
     reader.readAsText(file);
 }
 
 function parseTextFile(file) {
+    console.log('Starting to parse file:', file.name);
     const reader = new FileReader();
     reader.onload = function(e) {
         const text = e.target.result;
+        console.log('File content loaded, first 200 chars:', text.substring(0, 200));
         const parsedData = parseBloodworkText(text, file.name);
-        if (parsedData) {
+        if (parsedData && Object.keys(parsedData.tests).length > 0) {
+            console.log('Successfully parsed data, adding to reports');
             bloodworkReports.push(parsedData);
             updateFilters();
+        } else {
+            console.log('No valid test data found in file');
+            alert(`Could not parse valid bloodwork data from ${file.name}. Please check the file format.`);
         }
+    };
+    reader.onerror = function(e) {
+        console.error('Error reading file:', e);
     };
     reader.readAsText(file);
 }
 
 function parseBloodworkText(text, _originalFilename) {
+    console.log('Parsing text:', text.substring(0, 200) + '...');
+    
     const report = {
         filename: `anonymized_${Date.now()}_${Math.random().toString(36).substring(2, 11)}.txt`,
         date: extractDate(text),
@@ -55,34 +79,34 @@ function parseBloodworkText(text, _originalFilename) {
         tests: {}
     };
     
-    // Parse Chemistry Panel
-    const chemistrySection = extractSection(text, 'CHEMISTRY', 'Lipid Profile|CLINICAL MICROSCOPY|HEMATOLOGY');
-    if (chemistrySection) {
-        report.tests['Chemistry'] = parseChemistrySection(chemistrySection);
+    console.log('Extracted basic info:', {
+        date: report.date,
+        labNumber: report.labNumber,
+        patientInfo: report.patientInfo
+    });
+    
+    // Parse Chemistry Panel - simple approach
+    if (text.includes('Chemistry:') || text.includes('FBS')) {
+        const chemTests = parseChemistrySection(text);
+        if (chemTests.length > 0) {
+            report.tests['Chemistry'] = chemTests;
+        }
     }
     
-    // Parse Lipid Profile
-    const lipidSection = extractSection(text, 'Lipid Profile', 'BUN|CLINICAL MICROSCOPY|HEMATOLOGY');
-    if (lipidSection) {
-        report.tests['Lipid Profile'] = parseLipidSection(lipidSection);
+    // Parse Lipid Profile - simple approach
+    if (text.includes('Lipid Profile:')) {
+        const lipidTests = parseLipidSection(text);
+        if (lipidTests.length > 0) {
+            report.tests['Lipid Profile'] = lipidTests;
+        }
     }
     
-    // Parse Kidney Function
-    const kidneySection = extractKidneyTests(text);
-    if (kidneySection.length > 0) {
-        report.tests['Kidney Function'] = kidneySection;
-    }
-    
-    // Parse Liver Function
-    const liverSection = extractLiverTests(text);
-    if (liverSection.length > 0) {
-        report.tests['Liver Function'] = liverSection;
-    }
-    
-    // Parse Complete Blood Count
-    const cbcSection = extractSection(text, 'Complete Blood Count', 'Differential Count');
-    if (cbcSection) {
-        report.tests['Complete Blood Count'] = parseCBCSection(cbcSection);
+    // Parse Complete Blood Count - simple approach
+    if (text.includes('Complete Blood Count:')) {
+        const cbcTests = parseCBCSection(text);
+        if (cbcTests.length > 0) {
+            report.tests['Complete Blood Count'] = cbcTests;
+        }
     }
     
     // Parse Differential Count
@@ -111,6 +135,7 @@ function parseBloodworkText(text, _originalFilename) {
         });
     });
     
+    console.log('Final parsed report:', report);
     return report;
 }
 
@@ -121,7 +146,7 @@ function extractDate(text) {
 
 function extractLabNumber(text) {
     const labMatch = text.match(/Lab\. Number\s*:\s*(\d+)/i);
-    return labMatch ? 'REDACTED' : 'Unknown';
+    return labMatch ? 'REDACTED' : 'N/A';
 }
 
 function extractPatientInfo(text) {
@@ -152,9 +177,19 @@ function extractSection(text, startMarker, endMarker) {
 function parseChemistrySection(text) {
     const tests = [];
     
-    // FBS (Fasting Blood Sugar)
-    const fbsMatch = text.match(/FBS.*?(\d+\.\d+)\s*mg\/dL\s*(\d+\.\d+~\d+\.\d+)/i);
+    console.log('Parsing chemistry section...');
+    
+    // FBS (Fasting Blood Sugar) - multiple patterns
+    let fbsMatch = text.match(/FBS.*?(\d+\.?\d*)\s+mg\/dL\s+(\d+\.?\d*~\d+\.?\d*)/i);
+    if (!fbsMatch) {
+        fbsMatch = text.match(/FBS \(Fasting Blood Sugar\)\s+(\d+\.?\d*)\s+mg\/dL\s+(\d+\.?\d*~\d+\.?\d*)/i);
+    }
+    if (!fbsMatch) {
+        fbsMatch = text.match(/Fasting Blood Sugar.*?(\d+\.?\d*)\s+mg\/dL\s+(\d+\.?\d*~\d+\.?\d*)/i);
+    }
+    
     if (fbsMatch) {
+        console.log('Found FBS match:', fbsMatch);
         const value = parseFloat(fbsMatch[1]);
         const range = fbsMatch[2].split('~').map(v => parseFloat(v));
         tests.push({
@@ -164,6 +199,8 @@ function parseChemistrySection(text) {
             range: fbsMatch[2],
             status: getValueStatus(value, range[0], range[1])
         });
+    } else {
+        console.log('No FBS match found in text');
     }
     
     return tests;
@@ -173,12 +210,9 @@ function parseLipidSection(text) {
     const tests = [];
     
     const lipidTests = [
-        { name: 'Total Cholesterol', pattern: /Cholesterol.*?(\d+\.\d+)\s*mg\/dL.*?<\s*(\d+\.\d+)/ },
-        { name: 'Triglycerides', pattern: /Triglycerides.*?(\d+\.\d+)\s*mg\/dL.*?<\s*(\d+\.\d+)/ },
-        { name: 'HDL Cholesterol', pattern: /HDL.*?(\d+\.\d+)\s*mg\/dL.*?>\s*(\d+\.\d+)/ },
-        { name: 'LDL Cholesterol', pattern: /LDL.*?(\d+\.\d+)\s*mg\/dL.*?<\s*(\d+\.\d+)/ },
-        { name: 'VLDL', pattern: /VLDL.*?(\d+\.\d+)\s*mg\/dL/ },
-        { name: 'CHOL/HDL Ratio', pattern: /CHOL\/HDL Ratio\s+(\d+\.\d+).*?<\s*(\d+\.\d+)/ }
+        { name: 'Total Cholesterol', pattern: /Total Cholesterol\s+(\d+\.?\d*)\s+mg\/dL\s+<\s*(\d+\.?\d*)/ },
+        { name: 'HDL Cholesterol', pattern: /HDL Cholesterol\s+(\d+\.?\d*)\s+mg\/dL\s+>\s*(\d+\.?\d*)/ },
+        { name: 'LDL Cholesterol', pattern: /LDL Cholesterol\s+(\d+\.?\d*)\s+mg\/dL\s+<\s*(\d+\.?\d*)/ }
     ];
     
     lipidTests.forEach(testPattern => {
@@ -310,38 +344,37 @@ function extractLiverTests(text) {
 
 function parseCBCSection(text) {
     const tests = [];
-    const lines = text.split('\n');
+    console.log('Parsing CBC section...');
     
+    // Simple pattern matching for tab/space separated values
     const testPatterns = [
-        { name: 'White Blood Cells', pattern: /White Blood Cells.*?(\d+\.?\d*)\s*X10\^?\d*\/?\w*\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'Red Blood Cells', pattern: /Red Blood Cells.*?(\d+\.?\d*)\s*X10\^?\d*\/?\w*\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'Hemoglobin', pattern: /Hemoglobin.*?(\d+\.?\d*)\s*g\/dL\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'Hematocrit', pattern: /Hematocrit.*?(\d+\.?\d*)\s*%?\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'Mean Corpuscular Volume', pattern: /Mean Corpuscular Volume.*?(\d+\.?\d*)\s*fL\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'Mean Corpuscular Hb', pattern: /Mean Corpuscular Hb(?!\s*Conc).*?(\d+\.?\d*)\s*pg\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'Mean Corpuscular Hb Conc.', pattern: /Mean Corpuscular Hb Conc.*?(\d+\.?\d*)\s*g\/dL\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'RBC Distribution Width', pattern: /RBC Distribution Width.*?(\d+\.?\d*)\s*%\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'Platelet Count', pattern: /Platelet Count.*?(\d+\.?\d*)\s*X10\^?\d*\/?\w*\s*(\d+\.?\d*~\d+\.?\d*)/ },
-        { name: 'Mean Platelet Volume', pattern: /Mean Platelet Volume.*?(\d+\.?\d*)\s*fL\s*(\d+\.?\d*~\d+\.?\d*)/ }
+        { name: 'White Blood Cells', pattern: /White Blood Cells\s+(\d+\.?\d*)\s+([^\s]+)\s+(\d+\.?\d*~\d+\.?\d*)/, unit: 'X10³/mm³' },
+        { name: 'Red Blood Cells', pattern: /Red Blood Cells\s+(\d+\.?\d*)\s+([^\s]+)\s+(\d+\.?\d*~\d+\.?\d*)/, unit: 'X10⁶/mm³' },
+        { name: 'Hemoglobin', pattern: /Hemoglobin\s+(\d+\.?\d*)\s+([^\s]+)\s+(\d+\.?\d*~\d+\.?\d*)/, unit: 'g/dL' },
+        { name: 'Hematocrit', pattern: /Hematocrit\s+(\d+\.?\d*)\s+([^\s]+)\s+(\d+\.?\d*~\d+\.?\d*)/, unit: '%' }
     ];
     
     testPatterns.forEach(testPattern => {
         const match = text.match(testPattern.pattern);
         if (match) {
+            console.log(`Found ${testPattern.name} match:`, match);
             const value = parseFloat(match[1]);
-            const range = match[2].split('~').map(v => parseFloat(v));
+            const range = match[3].split('~').map(v => parseFloat(v));
             const status = getValueStatus(value, range[0], range[1]);
             
             tests.push({
                 name: testPattern.name,
                 value: match[1],
-                unit: getUnit(testPattern.name),
-                range: match[2],
+                unit: testPattern.unit,
+                range: match[3],
                 status: status
             });
+        } else {
+            console.log(`No match found for ${testPattern.name}`);
         }
     });
     
+    console.log('CBC tests found:', tests.length);
     return tests;
 }
 
@@ -488,6 +521,8 @@ function updateFilters() {
 function updateTimeline() {
     const container = document.getElementById('timelineContent');
     
+    console.log('Updating timeline with', bloodworkReports.length, 'reports');
+    
     if (bloodworkReports.length === 0) {
         container.innerHTML = 'No bloodwork data loaded yet.';
         return;
@@ -503,7 +538,7 @@ function updateTimeline() {
             <div class="timeline-item" onclick="showReportDetails('${index}')">
                 <div class="timeline-date">${report.date}</div>
                 <div class="timeline-content">
-                    <h4>Lab #${report.labNumber}</h4>
+                    <h4>Report ${index + 1}</h4>
                     <div class="timeline-summary">
                         ${Object.keys(report.tests).length} test categories, 
                         ${Object.values(report.tests).reduce((sum, tests) => sum + tests.length, 0)} total tests
