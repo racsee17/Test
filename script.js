@@ -46,9 +46,9 @@ function parseTextFile(file) {
     reader.readAsText(file);
 }
 
-function parseBloodworkText(text, filename) {
+function parseBloodworkText(text, _originalFilename) {
     const report = {
-        filename: filename,
+        filename: `anonymized_${Date.now()}_${Math.random().toString(36).substring(2, 11)}.txt`,
         date: extractDate(text),
         labNumber: extractLabNumber(text),
         patientInfo: extractPatientInfo(text),
@@ -121,7 +121,7 @@ function extractDate(text) {
 
 function extractLabNumber(text) {
     const labMatch = text.match(/Lab\. Number\s*:\s*(\d+)/i);
-    return labMatch ? labMatch[1] : 'Unknown';
+    return labMatch ? 'REDACTED' : 'Unknown';
 }
 
 function extractPatientInfo(text) {
@@ -130,7 +130,7 @@ function extractPatientInfo(text) {
     const sexMatch = text.match(/Sex\s*:\s*(\w+)/i);
     
     return {
-        name: nameMatch ? nameMatch[1].trim() : 'Unknown',
+        name: 'REDACTED',
         age: ageMatch ? ageMatch[1] : 'Unknown',
         sex: sexMatch ? sexMatch[1] : 'Unknown'
     };
@@ -963,25 +963,7 @@ window.onload = function() {
 };
 
 async function loadSampleData() {
-    try {
-        const response = await fetch('complete_bloodwork_data.json');
-        const data = await response.json();
-        
-        data.forEach(report => {
-            // Add to global collections for filtering
-            Object.keys(report.tests).forEach(category => {
-                testCategories.add(category);
-                report.tests[category].forEach(test => {
-                    allTests.add(test.name);
-                });
-            });
-            
-            bloodworkReports.push(report);
-        });
-        
-        updateFilters();
-    } catch (error) {
-        console.error('Error loading sample data:', error);
-        updateFilters(); // Initialize with empty state
-    }
+    // No sample data loaded - user must upload their own files
+    console.log('Ready for file uploads - no sample data loaded');
+    updateFilters(); // Initialize with empty state
 }
